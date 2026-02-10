@@ -54,6 +54,8 @@ impl<'a> Serialize for GOODArtifact<'a> {
 struct GOODStat<'a> {
     key: &'a str,
     value: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending: Option<bool>,
 }
 
 impl<'a> GOODStat<'a> {
@@ -67,6 +69,7 @@ impl<'a> GOODStat<'a> {
                 | ArtifactStatName::Def => stat.value,
                 _ => stat.value * 100.0,
             },
+            pending: if stat.pending { Some(true) } else { None },
         }
     }
 }
@@ -167,6 +170,10 @@ impl ArtifactSetName {
             ArtifactSetName::ObsidianCodex => "ObsidianCodex",
             ArtifactSetName::LongNightsOath => "LongNightsOath",
             ArtifactSetName::FinaleOfTheDeepGalleries => "FinaleOfTheDeepGalleries",
+            ArtifactSetName::NightOfTheSkysUnveiling => "NightOfTheSkysUnveiling",
+            ArtifactSetName::SilkenMoonsSerenade => "SilkenMoonsSerenade",
+            ArtifactSetName::ADayCarvedFromRisingWinds => "ADayCarvedFromRisingWinds",
+            ArtifactSetName::AubadeOfMorningstarAndMoon => "AubadeOfMorningstarAndMoon",
         }
     }
 }

@@ -3,6 +3,8 @@ use clap::ValueEnum;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum GenshinArtifactExportFormat {
     Mona,
+    #[value(name = "mona_extended")]
+    MonaExtended,
     MingyuLab,
     Good,
     CSV,

@@ -83,10 +83,15 @@ impl ArtifactScannerApplication {
         )?;
 
         let result = scanner.scan()?;
-        let artifacts = result
-            .iter()
-            .flat_map(GenshinArtifact::try_from)
-            .collect::<Vec<_>>();
+        let mut artifacts = Vec::new();
+        for scan_result in result.iter() {
+            match GenshinArtifact::try_from(scan_result) {
+                Ok(art) => artifacts.push(art),
+                Err(_) => {
+                    log::error!("Failed to parse artifact: {:?}", scan_result);
+                }
+            }
+        }
 
         let exporter = GenshinArtifactExporter::new(arg_matches, &artifacts)?;
         let mut export_assets = ExportAssets::new();

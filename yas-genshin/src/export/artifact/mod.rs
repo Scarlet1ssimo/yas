@@ -5,6 +5,7 @@ pub use exporter::GenshinArtifactExporter;
 mod good;
 mod mingyu_lab;
 mod mona_uranai;
+mod mona_extended;
 mod exporter;
 mod export_format;
 mod config;

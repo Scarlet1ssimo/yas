@@ -96,12 +96,17 @@ pub enum ArtifactSetName {
     ObsidianCodex,
     LongNightsOath,
     FinaleOfTheDeepGalleries,
+    NightOfTheSkysUnveiling,
+    SilkenMoonsSerenade,
+    ADayCarvedFromRisingWinds,  
+    AubadeOfMorningstarAndMoon,
 }
 
 #[derive(Debug, Clone)]
 pub struct ArtifactStat {
     pub name: ArtifactStatName,
     pub value: f64,
+    pub pending: bool,
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
@@ -168,27 +173,43 @@ impl ArtifactStatName {
 }
 
 impl ArtifactStat {
-    // e.g "生命值+4,123", "暴击率+10%"
+    // e.g "生命值+4,123", "暴击率+10%", "暴击伤害+7.8% (待激活)"
     pub fn from_zh_cn_raw(s: &str) -> Option<ArtifactStat> {
         let temp: Vec<&str> = s.split('+').collect();
         if temp.len() != 2 {
             return None;
         }
 
-        let is_percentage = temp[1].contains('%');
-        let stat_name = match ArtifactStatName::from_zh_cn(temp[0], is_percentage) {
+        let stat_name_str = temp[0].trim();
+        let value_str = temp[1].trim();
+
+        let is_percentage = value_str.contains('%');
+        let stat_name = match ArtifactStatName::from_zh_cn(stat_name_str, is_percentage) {
             Some(v) => v,
             None => return None,
         };
 
-        let re = Regex::new("[%,]").unwrap();
-        let mut value = match re.replace_all(temp[1], "").parse::<f64>() {
+        // Determine pending status (robust check)
+        let pending = value_str.contains("待") || value_str.to_lowercase().contains("pending");
+
+        // Extract value using Regex to ignore noise/suffixes
+        let re = Regex::new(r"[\d,]+(\.\d+)?").unwrap();
+        let value_match = match re.find(value_str) {
+            Some(m) => m.as_str(),
+            None => {
+                error!("stat `{}` value parse error", s);
+                return None;
+            }
+        };
+
+        let mut value = match value_match.replace(',', "").parse::<f64>() {
             Ok(v) => v,
             Err(_) => {
-                error!("stat `{}` parse error", s);
+                error!("stat `{}` value parse error", s);
                 return None;
             },
         };
+
         if is_percentage {
             value /= 100.0;
         }
@@ -196,6 +217,7 @@ impl ArtifactStat {
         Some(ArtifactStat {
             name: stat_name,
             value,
+            pending,
         })
     }
 }
@@ -440,8 +462,13 @@ impl ArtifactSetName {
             "失冕的宝冠" | "褪光的翠尾" | "暗结的明花" | "举业的识刻" | "筹谋的共樽" => Some(ArtifactSetName::UnfinishedReverie),
             "魔战士的羽面" | "巡山客的信标" | "驯兽师的护符" | "秘术家的金盘" | "游学者的爪杯" => Some(ArtifactSetName::ScrollOfTheHeroOfCinderCity),
             "诸圣的礼冠" | "灵髓的根脉" | "异种的期许" | "夜域的迷思" | "纷争的前宴" => Some(ArtifactSetName::ObsidianCodex),
-            "深廊的遂失之冕" | "深廊的漫远之约" | "深廊的回奏之歌" | "深廊的湮落之刻" | "深廊的饫赐之宴" => Some(ArtifactSetName::LongNightsOath),
-            "被浸染的缨盔" | "夜鸣莺的尾羽" | "执灯人的誓词" | "不死者的哀铃" | "未吹响的号角" => Some(ArtifactSetName::FinaleOfTheDeepGalleries),
+            "深廊的遂失之冕" | "深廊的漫远之约" | "深廊的回奏之歌" | "深廊的湮落之刻" | "深廊的饫赐之宴" => Some(ArtifactSetName::FinaleOfTheDeepGalleries),
+            "被浸染的缨盔" | "夜鸣莺的尾羽" | "执灯人的誓词" | "不死者的哀铃" | "未吹响的号角" => Some(ArtifactSetName::LongNightsOath),
+            "永劫之冕"| "深罪之羽" | "渴真之花" | "谕告之钟" | "满溢之壶" => Some(ArtifactSetName::NightOfTheSkysUnveiling),
+            "司信者的圣冕"| "受福者的白羽" | "流离者的晶泪" | "祭霜者的迷狂" | "至纯者的欢荣" => Some(ArtifactSetName::SilkenMoonsSerenade),
+            "哀慕的恋歌"| "晨光的明誓" | "风花的箴铭" | "春律的片刻" | "未言的宴话" => Some(ArtifactSetName::ADayCarvedFromRisingWinds),
+            "献与月的银冕"| "献与月的离光" | "献与月的华梦" | "献与月的终时" | "献与月的酹祭" => Some(ArtifactSetName::AubadeOfMorningstarAndMoon),
+
             _ => None,
         }
     }
@@ -711,7 +738,68 @@ impl ArtifactSlot {
             "深廊的回奏之歌" => Some(ArtifactSlot::Flower),
             "深廊的湮落之刻" => Some(ArtifactSlot::Sand),
             "深廊的饫赐之宴" => Some(ArtifactSlot::Goblet),
+            "永劫之冕" => Some(ArtifactSlot::Head),
+            "深罪之羽" => Some(ArtifactSlot::Feather),
+            "渴真之花" => Some(ArtifactSlot::Flower),
+            "谕告之钟" => Some(ArtifactSlot::Sand),
+            "满溢之壶" => Some(ArtifactSlot::Goblet),
+            "司信者的圣冕" => Some(ArtifactSlot::Head),
+            "受福者的白羽" => Some(ArtifactSlot::Feather),
+            "流离者的晶泪" => Some(ArtifactSlot::Flower),
+            "祭霜者的迷狂" => Some(ArtifactSlot::Sand),
+            "至纯者的欢荣" => Some(ArtifactSlot::Goblet),
+            "哀慕的恋歌" => Some(ArtifactSlot::Flower),
+            "晨光的明誓" => Some(ArtifactSlot::Feather),
+            "风花的箴铭" => Some(ArtifactSlot::Sand),
+            "春律的片刻" => Some(ArtifactSlot::Goblet),
+            "未言的宴话" => Some(ArtifactSlot::Head),
+            "献与月的银冕" => Some(ArtifactSlot::Head),
+            "献与月的离光" => Some(ArtifactSlot::Feather),
+            "献与月的华梦" => Some(ArtifactSlot::Flower),
+            "献与月的终时" => Some(ArtifactSlot::Sand),
+            "献与月的酹祭" => Some(ArtifactSlot::Goblet),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pending_activation() {
+        let s = "暴击伤害+7.8% (待激活)";
+        let stat = ArtifactStat::from_zh_cn_raw(s).unwrap();
+        assert_eq!(stat.name, ArtifactStatName::CriticalDamage);
+        assert!((stat.value - 0.078).abs() < 1e-6);
+        assert!(stat.pending);
+
+        let s_normal = "暴击伤害+7.8%";
+        let stat_normal = ArtifactStat::from_zh_cn_raw(s_normal).unwrap();
+        assert_eq!(stat_normal.name, ArtifactStatName::CriticalDamage);
+        assert!((stat_normal.value - 0.078).abs() < 1e-6);
+        assert!(!stat_normal.pending);
+
+        let s_english_parens = "暴击伤害+7.8% (待激活)";
+        let stat_english_parens = ArtifactStat::from_zh_cn_raw(s_english_parens).unwrap();
+        assert!(stat_english_parens.pending);
+
+        let s_chinese_parens = "暴击伤害+7.8% （待激活）";
+        let stat_chinese_parens = ArtifactStat::from_zh_cn_raw(s_chinese_parens).unwrap();
+        assert!(stat_chinese_parens.pending);
+
+        // Test malformed OCR cases
+        let s_missing_closing = "攻击力+4.7%（待激活";
+        let stat_missing = ArtifactStat::from_zh_cn_raw(s_missing_closing).unwrap();
+        assert_eq!(stat_missing.name, ArtifactStatName::AtkPercentage);
+        assert!((stat_missing.value - 0.047).abs() < 1e-6);
+        assert!(stat_missing.pending);
+
+        let s_malformed_text = "暴击伤害+7.0%（待激）";
+        let stat_malformed = ArtifactStat::from_zh_cn_raw(s_malformed_text).unwrap();
+        assert_eq!(stat_malformed.name, ArtifactStatName::CriticalDamage);
+        assert!((stat_malformed.value - 0.070).abs() < 1e-6);
+        assert!(stat_malformed.pending);
     }
 }

@@ -12,6 +12,7 @@ use crate::export::artifact::csv::GenshinArtifactCSVFormat;
 use super::good::GOODFormat;
 use super::mingyu_lab::MingyuLabFormat;
 use super::mona_uranai::MonaFormat;
+use super::mona_extended::MonaExtendedFormat;
 
 pub struct GenshinArtifactExporter<'a> {
     pub format: GenshinArtifactExportFormat,
@@ -49,6 +50,17 @@ impl<'a> AssetEmitter for GenshinArtifactExporter<'a> {
                     path,
                     contents.into_bytes(),
                     Some(String::from("莫娜圣遗物格式")));
+            },
+            GenshinArtifactExportFormat::MonaExtended => {
+                let path = self.output_dir.join("mona_extended.json");
+                let value = MonaExtendedFormat::new(results);
+                let contents = serde_json::to_string(&value).unwrap();
+
+                export_assets.add_asset(
+                    Some(String::from("artifacts_extended")),
+                    path,
+                    contents.into_bytes(),
+                    Some(String::from("莫娜圣遗物格式(扩展)")));
             },
             GenshinArtifactExportFormat::MingyuLab => {
                 let path = self.output_dir.join("mingyulab.json");
@@ -95,6 +107,18 @@ impl<'a> AssetEmitter for GenshinArtifactExporter<'a> {
                         path,
                         contents.into_bytes(),
                         Some(String::from("莫娜圣遗物格式")));
+                }
+                // mona extended
+                {
+                    let path = self.output_dir.join("mona_extended.json");
+                    let value = MonaExtendedFormat::new(results);
+                    let contents = serde_json::to_string(&value).unwrap();
+
+                    export_assets.add_asset(
+                        Some(String::from("mona_extended")),
+                        path,
+                        contents.into_bytes(),
+                        Some(String::from("莫娜圣遗物格式(扩展)")));
                 }
                 // mingyulab
                 {

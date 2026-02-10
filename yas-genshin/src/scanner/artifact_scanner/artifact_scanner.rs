@@ -41,14 +41,15 @@ pub struct GenshinArtifactScanner {
 }
 
 impl GenshinArtifactScanner {
-    pub const MAX_COUNT: usize = 2100;
+    pub const MAX_COUNT: usize = 2400;
 }
 
 // constructor
 impl GenshinArtifactScanner {
     fn get_image_to_text() -> Result<Box<dyn ImageToText<RgbImage> + Send>> {
+        use yas::ocr::PPOCRChV4RecInfer;
         let model: Box<dyn ImageToText<RgbImage> + Send> = Box::new(
-            yas_ocr_model!("./models/model_training.onnx", "./models/index_2_word.json")?
+            PPOCRChV4RecInfer::new()?
         );
         Ok(model)
     }
@@ -161,7 +162,7 @@ impl GenshinArtifactScanner {
 
         if s.starts_with(item_name) {
             let chars = s.chars().collect::<Vec<char>>();
-            let count_str = chars[4..chars.len() - 5].iter().collect::<String>();
+            let count_str = chars[3..chars.len() - 5].iter().collect::<String>().trim().to_string();
             Ok(match count_str.parse::<usize>() {
                 Ok(v) => (v as i32).min(max_count),
                 Err(_) => max_count,

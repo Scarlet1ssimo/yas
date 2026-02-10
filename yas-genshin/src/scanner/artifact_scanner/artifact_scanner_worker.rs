@@ -30,8 +30,9 @@ fn parse_level(s: &str) -> Result<i32> {
 }
 
 fn get_image_to_text() -> Result<Box<dyn ImageToText<RgbImage> + Send>> {
+    use yas::ocr::PPOCRChV4RecInfer;
     let model: Box<dyn ImageToText<RgbImage> + Send> = Box::new(
-        yas_ocr_model!("./models/model_training.onnx", "./models/index_2_word.json")?
+        PPOCRChV4RecInfer::new()?
     );
     Ok(model)
 }
