@@ -1,7 +1,7 @@
 use anyhow::Result;
+use image::io::Reader as ImageReader;
 use image::RgbImage;
 use yas::ocr::{ImageToText, PPOCRChV4RecInfer};
-use image::io::Reader as ImageReader;
 
 fn main() -> Result<()> {
     let model: Box<dyn ImageToText<RgbImage>> = Box::new(PPOCRChV4RecInfer::new()?);
