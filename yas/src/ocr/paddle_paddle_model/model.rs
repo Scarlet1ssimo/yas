@@ -1,35 +1,37 @@
+use crate::ocr::paddle_paddle_model::preprocess::resize_img;
+use crate::ocr::ImageToText;
+use crate::positioning::Shape3D;
+use crate::utils::read_file_to_string;
+use anyhow::Result;
+use image::{EncodableLayout, RgbImage};
+#[cfg(feature = "ort")]
+use ort::session::builder::GraphOptimizationLevel;
+use ort::value::Tensor;
 use std::cell::RefCell;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use anyhow::Result;
-use image::{EncodableLayout, RgbImage};
-#[cfg(feature = "tract_onnx")]
-use tract_onnx::tract_hir::shapefactoid;
-use crate::ocr::ImageToText;
-use crate::ocr::paddle_paddle_model::preprocess::resize_img;
-use crate::positioning::Shape3D;
-use crate::utils::read_file_to_string;
-#[cfg(feature = "ort")]
-use ort::GraphOptimizationLevel;
 #[cfg(feature = "tract_onnx")]
 use tract_onnx::prelude::*;
 #[cfg(feature = "tract_onnx")]
 use tract_onnx::tract_hir::infer::InferenceOp;
-
 #[cfg(feature = "tract_onnx")]
-use super::preprocess::normalize_image_to_tensor;
+use tract_onnx::tract_hir::shapefactoid;
+
 #[cfg(feature = "ort")]
 use super::preprocess::normalize_image_to_ndarray;
+#[cfg(feature = "tract_onnx")]
+use super::preprocess::normalize_image_to_tensor;
 
 #[cfg(feature = "tract_onnx")]
-type ModelType = RunnableModel<InferenceFact, Box<dyn InferenceOp>, Graph<InferenceFact, Box<dyn InferenceOp>>>;
+type ModelType =
+    RunnableModel<InferenceFact, Box<dyn InferenceOp>, Graph<InferenceFact, Box<dyn InferenceOp>>>;
 
 pub struct PPOCRModel {
     index_to_word: Vec<String>,
     #[cfg(feature = "tract_onnx")]
     model: ModelType,
     #[cfg(feature = "ort")]
-    model: ort::Session,
+    model: RefCell<ort::session::Session>,
 
     inference_count: RefCell<usize>,
     inference_time: RefCell<Duration>,
@@ -47,19 +49,26 @@ fn parse_index_to_word(s: &str, use_whitespace: bool) -> Vec<String> {
 }
 
 impl PPOCRModel {
-    pub fn new_from_file<P1, P2>(onnx_file: P1, words_file: P2) -> Result<PPOCRModel> where P1: AsRef<Path>, P2: AsRef<Path> {
+    pub fn new_from_file<P1, P2>(onnx_file: P1, words_file: P2) -> Result<PPOCRModel>
+    where
+        P1: AsRef<Path>,
+        P2: AsRef<Path>,
+    {
         let words_str = std::fs::read_to_string(words_file)?;
         let index_to_word = parse_index_to_word(&words_str, true);
 
         #[cfg(feature = "ort")]
-        let model = ort::Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .commit_from_file(onnx_file)?;
+        let model = RefCell::new(
+            ort::session::Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_threads(4)?
+                .commit_from_file(onnx_file)?,
+        );
 
         #[cfg(feature = "tract_onnx")]
         let model = {
-            let fact = InferenceFact::new().with_datum_type(DatumType::F32)
+            let fact = InferenceFact::new()
+                .with_datum_type(DatumType::F32)
                 .with_shape(shapefactoid!(_, 3, _, _));
 
             tract_onnx::onnx()
@@ -79,14 +88,17 @@ impl PPOCRModel {
 
     pub fn new(onnx: &[u8], index_to_word: Vec<String>) -> Result<Self> {
         #[cfg(feature = "ort")]
-        let model = ort::Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .commit_from_memory(onnx)?;
+        let model = RefCell::new(
+            ort::session::Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_threads(4)?
+                .commit_from_memory(onnx)?,
+        );
 
         #[cfg(feature = "tract_onnx")]
         let model = {
-            let fact = InferenceFact::new().with_datum_type(DatumType::F32)
+            let fact = InferenceFact::new()
+                .with_datum_type(DatumType::F32)
                 .with_shape(shapefactoid!(_, 3, _, _));
 
             tract_onnx::onnx()
@@ -127,52 +139,75 @@ impl ImageToText<RgbImage> for PPOCRModel {
         let tensor = normalize_image_to_tensor(&resized_image);
 
         #[cfg(feature = "ort")]
-        let result = self.model.run(ort::inputs![tensor]?)?;
-        #[cfg(feature = "tract_onnx")]
-        let result = self.model.run(tvec!(tensor.into()))?;
-
-        #[cfg(feature = "ort")]
-        let arr = result[0].try_extract_tensor()?;
-        #[cfg(feature = "tract_onnx")]
-        let arr = result[0].to_array_view::<f32>()?;
-
-        let shape = arr.shape();
-        // println!("{:?}", shape);
-
-        let mut text_index = Vec::new();
-
-        for i in 0..shape[1] {
-            let mut max_index = 0;
-            let mut max_value = -f32::INFINITY;
-            for j in 0..shape[2] {
-                let value = arr[[0, i, j]];
-                // println!("{}", value);
-                if value > max_value {
-                    max_value = value;
-                    max_index = j;
+        let s = {
+            let mut session = self.model.borrow_mut();
+            let result = session.run(ort::inputs![Tensor::from_array(tensor)?])?;
+            let arr = result[0].try_extract_array::<f32>()?;
+            let shape = arr.shape();
+            let mut text_index = Vec::new();
+            for i in 0..shape[1] {
+                let mut max_index = 0;
+                let mut max_value = -f32::INFINITY;
+                for j in 0..shape[2] {
+                    let value = arr[[0, i, j]];
+                    if value > max_value {
+                        max_value = value;
+                        max_index = j;
+                    }
+                }
+                text_index.push(max_index);
+            }
+            let mut indices = Vec::new();
+            if text_index[0] != 0 {
+                indices.push(text_index[0]);
+            }
+            for i in 1..text_index.len() {
+                if text_index[i] != text_index[i - 1] && text_index[i] != 0 {
+                    indices.push(text_index[i]);
                 }
             }
-            text_index.push(max_index);
-        }
-
-        let mut indices = Vec::new();
-        if text_index[0] != 0 {
-            indices.push(text_index[0]);
-        }
-        for i in 1..text_index.len() {
-            if text_index[i] != text_index[i - 1] && text_index[i] != 0 {
-                indices.push(text_index[i]);
+            let mut out = String::new();
+            for &index in indices.iter() {
+                out.push_str(&self.index_to_word[index - 1]);
             }
-        }
-
-        let mut s = String::new();
-        for &index in indices.iter() {
-            s.push_str(&self.index_to_word[index - 1]);
-        }
-
-        // println!("{:?}", text_index);
-
-        // let s = format!("{:?}", shape);
+            out
+        };
+        #[cfg(feature = "tract_onnx")]
+        let result = self.model.run(tvec!(tensor.into()))?;
+        #[cfg(feature = "tract_onnx")]
+        let arr = result[0].to_array_view::<f32>()?;
+        #[cfg(feature = "tract_onnx")]
+        let shape = arr.shape();
+        #[cfg(feature = "tract_onnx")]
+        let s = {
+            let mut text_index = Vec::new();
+            for i in 0..shape[1] {
+                let mut max_index = 0;
+                let mut max_value = -f32::INFINITY;
+                for j in 0..shape[2] {
+                    let value = arr[[0, i, j]];
+                    if value > max_value {
+                        max_value = value;
+                        max_index = j;
+                    }
+                }
+                text_index.push(max_index);
+            }
+            let mut indices = Vec::new();
+            if text_index[0] != 0 {
+                indices.push(text_index[0]);
+            }
+            for i in 1..text_index.len() {
+                if text_index[i] != text_index[i - 1] && text_index[i] != 0 {
+                    indices.push(text_index[i]);
+                }
+            }
+            let mut out = String::new();
+            for &index in indices.iter() {
+                out.push_str(&self.index_to_word[index - 1]);
+            }
+            out
+        };
 
         let elapsed_time = start_time.elapsed()?;
         *self.inference_time.borrow_mut() += elapsed_time;
@@ -186,22 +221,18 @@ impl ImageToText<RgbImage> for PPOCRModel {
     }
 }
 
-pub macro ppocr_model($onnx:literal, $index_to_word:literal) {
-    {
-        let model_bytes = include_bytes!($onnx);
-        let index_to_word_str = include_str!($index_to_word);
+pub macro ppocr_model($onnx:literal, $index_to_word:literal) {{
+    let model_bytes = include_bytes!($onnx);
+    let index_to_word_str = include_str!($index_to_word);
 
-        let mut index_to_word_vec: Vec<String> = Vec::new();
-        for line in index_to_word_str.lines() {
-            index_to_word_vec.push(String::from(line));
-        }
-        index_to_word_vec.push(String::from(" "));
-
-        PPOCRModel::new(
-            model_bytes, index_to_word_vec,
-        )
+    let mut index_to_word_vec: Vec<String> = Vec::new();
+    for line in index_to_word_str.lines() {
+        index_to_word_vec.push(String::from(line));
     }
-}
+    index_to_word_vec.push(String::from(" "));
+
+    PPOCRModel::new(model_bytes, index_to_word_vec)
+}}
 
 pub struct PPOCRChV4RecInfer {
     model: PPOCRModel,
@@ -210,7 +241,7 @@ pub struct PPOCRChV4RecInfer {
 impl PPOCRChV4RecInfer {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            model: ppocr_model!("./ch_PP-OCRv4_rec_infer.onnx", "./ppocr_keys_v1.txt")?
+            model: ppocr_model!("./ch_PP-OCRv4_rec_infer.onnx", "./ppocr_keys_v1.txt")?,
         })
     }
 }

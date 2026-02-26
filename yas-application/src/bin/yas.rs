@@ -1,7 +1,11 @@
+use std::panic;
+
 use clap::{command, Command};
 use yas::utils::press_any_key_to_continue;
 use yas_genshin::application::ArtifactScannerApplication;
 use yas_starrail::application::RelicScannerApplication;
+
+const ERROR_LOG: &str = "yas_error.log";
 
 fn get_genshin_command() -> Command {
     let cmd = ArtifactScannerApplication::build_command();
@@ -19,7 +23,30 @@ fn init() {
         .init();
 }
 
+/// Write error/panic to yas_error.log so you can read it after the window closes (e.g. when UAC spawns another window).
+fn write_error_log(s: &str) {
+    let _ = std::fs::write(ERROR_LOG, s);
+}
+
+fn install_panic_log() {
+    panic::set_hook(Box::new(|info| {
+        let msg = match info.payload().downcast_ref::<&str>() {
+            Some(s) => *s,
+            None => match info.payload().downcast_ref::<String>() {
+                Some(s) => s.as_str(),
+                None => "Box<dyn Any>",
+            },
+        };
+        let loc = info.location().map(|l| l.to_string()).unwrap_or_default();
+        let _ = std::fs::write(
+            ERROR_LOG,
+            format!("panic: {}\n{}\n\nSee yas_error.log after the window closes.", msg, loc),
+        );
+    }));
+}
+
 pub fn main() {
+    install_panic_log();
     init();
     let cmd = command!()
         .subcommand(get_genshin_command())
@@ -45,7 +72,10 @@ pub fn main() {
             press_any_key_to_continue();
         },
         Err(e) => {
+            let msg = format!("{}\n\nCaused by:\n{:?}", e, e);
             log::error!("error: {}", e);
+            write_error_log(&msg);
+            eprintln!("错误已写入 {}，请查看该文件", ERROR_LOG);
             press_any_key_to_continue();
         }
     }

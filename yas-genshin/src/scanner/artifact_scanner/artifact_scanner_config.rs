@@ -19,4 +19,8 @@ pub struct GenshinArtifactScannerConfig {
     /// the exact amount to scan
     #[arg(id = "number", long, help = "指定圣遗物数量", value_name = "NUMBER", default_value_t = -1)]
     pub number: i32,
+
+    /// JSON path of artifacts to auto-lock (array of { name, main_stat_name, main_stat_value, sub_stat: [4] }, mona_extended compatible)
+    #[arg(long = "lock", help = "自动上锁：读入 JSON 列表，识别到与列表中完全一致的圣遗物时点击上锁", value_name = "LOCK_JSON")]
+    pub lock_list_path: Option<std::path::PathBuf>,
 }

@@ -230,6 +230,10 @@ impl GenshinRepositoryScanController {
     }
 
     #[inline(always)]
+    pub fn system_control_mut(&mut self) -> &mut SystemControl {
+        &mut self.system_control
+    }
+
     pub fn get_flag_color(&self) -> Result<image::Rgb<u8>> {
         let mut pos_f64 = Pos {
             x: self.window_info.flag_pos.x + self.game_info.window.left as f64,

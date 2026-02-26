@@ -108,6 +108,17 @@
         "width": 33
       }
     },
+    "genshin_artifact_blessed_frost_detect_rect": {
+      "Rect": {
+        "top": 250,
+        "left": 889,
+        "height": 25,
+        "width": 200
+      }
+    },
+    "genshin_artifact_blessed_frost_offset_y": {
+      "Float": 39
+    },
     "genshin_artifact_item_equip_rect": {
       "Rect": {
         "top": 849.8,

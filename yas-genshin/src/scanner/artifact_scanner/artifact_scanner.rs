@@ -1,4 +1,11 @@
-use std::{cell::RefCell, ops::{Coroutine, CoroutineState}, pin::Pin, rc::Rc, sync::mpsc::{self, Sender}, time::SystemTime};
+use std::{
+    cell::RefCell,
+    ops::{Coroutine, CoroutineState},
+    pin::Pin,
+    rc::Rc,
+    sync::mpsc::{self, Receiver, Sender},
+    time::SystemTime,
+};
 
 use anyhow::Result;
 use clap::FromArgMatches;
@@ -7,17 +14,18 @@ use log::{error, info};
 
 use yas::capture::{Capturer, GenericCapturer};
 use yas::game_info::GameInfo;
-use yas::ocr::{ImageToText, yas_ocr_model};
-use yas::positioning::Pos;
+use yas::ocr::{yas_ocr_model, ImageToText};
+use yas::positioning::{Pos, Rect};
+use yas::utils;
 use yas::window_info::FromWindowInfoRepository;
 use yas::window_info::WindowInfoRepository;
 
-use crate::{scanner::artifact_scanner::artifact_scanner_worker::ArtifactScannerWorker};
+use crate::scanner::artifact_scanner::artifact_scanner_worker::ArtifactScannerWorker;
+use crate::scanner::artifact_scanner::lock_list::LockList;
 use crate::scanner::artifact_scanner::message_items::SendItem;
 use crate::scanner::artifact_scanner::scan_result::GenshinArtifactScanResult;
 use crate::scanner_controller::repository_layout::{
-    GenshinRepositoryScanController,
-    GenshinRepositoryScannerLogicConfig,
+    GenshinRepositoryScanController, GenshinRepositoryScannerLogicConfig,
     ReturnResult as GenshinRepositoryControllerReturnResult,
 };
 
@@ -47,10 +55,11 @@ impl GenshinArtifactScanner {
 // constructor
 impl GenshinArtifactScanner {
     fn get_image_to_text() -> Result<Box<dyn ImageToText<RgbImage> + Send>> {
-        use yas::ocr::PPOCRChV4RecInfer;
-        let model: Box<dyn ImageToText<RgbImage> + Send> = Box::new(
-            PPOCRChV4RecInfer::new()?
-        );
+        use yas::ocr::yas_ocr_model;
+        let model: Box<dyn ImageToText<RgbImage> + Send> = Box::new(yas_ocr_model!(
+            "../../scanner/artifact_scanner/models/model_training.onnx",
+            "../../scanner/artifact_scanner/models/index_2_word.json"
+        )?);
         Ok(model)
     }
 
@@ -72,9 +81,12 @@ impl GenshinArtifactScanner {
                 game_info.platform,
                 window_info_repo,
             )?,
-            controller: Rc::new(RefCell::new(
-                GenshinRepositoryScanController::new(window_info_repo, controller_config, game_info.clone(), true)?
-            )),
+            controller: Rc::new(RefCell::new(GenshinRepositoryScanController::new(
+                window_info_repo,
+                controller_config,
+                game_info.clone(),
+                true,
+            )?)),
             game_info,
             image_to_text: Self::get_image_to_text()?,
             // item count will be set later, once the scan starts
@@ -97,7 +109,12 @@ impl GenshinArtifactScanner {
             scanner_config: GenshinArtifactScannerConfig::from_arg_matches(arg_matches)?,
             window_info,
             controller: Rc::new(RefCell::new(
-                GenshinRepositoryScanController::from_arg_matches(window_info_repo, arg_matches, game_info.clone(), true)?
+                GenshinRepositoryScanController::from_arg_matches(
+                    window_info_repo,
+                    arg_matches,
+                    game_info.clone(),
+                    true,
+                )?,
             )),
             game_info,
             image_to_text: Self::get_image_to_text()?,
@@ -162,7 +179,11 @@ impl GenshinArtifactScanner {
 
         if s.starts_with(item_name) {
             let chars = s.chars().collect::<Vec<char>>();
-            let count_str = chars[3..chars.len() - 5].iter().collect::<String>().trim().to_string();
+            let count_str = chars[3..chars.len() - 5]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string();
             Ok(match count_str.parse::<usize>() {
                 Ok(v) => (v as i32).min(max_count),
                 Err(_) => max_count,
@@ -177,17 +198,31 @@ impl GenshinArtifactScanner {
 
         let now = SystemTime::now();
         let (tx, rx) = mpsc::channel::<Option<SendItem>>();
-        // let token = self.cancellation_token.clone();
         let count = self.get_item_count()?;
-        let worker = ArtifactScannerWorker::new(
-            self.window_info.clone(),
-            self.scanner_config.clone(),
-        )?;
 
-        let join_handle = worker.run(rx);
+        let lock_list = self
+            .scanner_config
+            .lock_list_path
+            .as_ref()
+            .map(|p| LockList::from_json_path(p))
+            .transpose()?;
+        if lock_list.is_some() {
+            info!("已加载自动上锁列表");
+        }
+
+        let (result_tx, result_rx) = if lock_list.is_some() {
+            let (t, r) = mpsc::channel::<Option<GenshinArtifactScanResult>>();
+            (Some(t), Some(r))
+        } else {
+            (None, None)
+        };
+
+        let worker =
+            ArtifactScannerWorker::new(self.window_info.clone(), self.scanner_config.clone())?;
+        let join_handle = worker.run(rx, result_tx);
         info!("Worker created");
 
-        self.send(&tx, count);
+        self.send(&tx, count, result_rx.as_ref(), lock_list.as_ref());
 
         match tx.send(None) {
             Ok(_) => info!("扫描结束，等待识别线程结束，请勿关闭程序"),
@@ -198,16 +233,54 @@ impl GenshinArtifactScanner {
             Ok(v) => {
                 info!("识别耗时: {:?}", now.elapsed()?);
 
-                // filter min level
                 let min_level = self.scanner_config.min_level;
-                let v = v.iter().filter(|a| {
-                    a.level >= min_level
-                }).cloned().collect();
+                let v = v.iter().filter(|a| a.level >= min_level).cloned().collect();
 
                 Ok(v)
-            }
+            },
             Err(_) => Err(anyhow::anyhow!("识别线程出现错误")),
         }
+    }
+
+    /// Click the detail-panel lock button at artifact_lock_pos. Call only when list-view lock detection says not locked.
+    fn try_lock_artifact(&mut self) -> Result<()> {
+        let origin = self.game_info.window.origin();
+        let pos = &self.window_info.artifact_lock_pos;
+        let cx = origin.x + pos.x as i32;
+        let cy = origin.y + pos.y as i32;
+
+        self.controller
+            .borrow_mut()
+            .system_control_mut()
+            .mouse_move_to(cx, cy)?;
+        utils::sleep(20);
+        self.controller.borrow_mut().system_control_mut().mouse_click()?;
+        utils::sleep(20);
+        self.controller
+            .borrow_mut()
+            .move_to(0, 0);
+        utils::sleep(30);
+        info!("已点击上锁");
+        Ok(())
+    }
+
+    /// After locking, refocus by clicking the current list item so scroll/next-item works (focus was on lock button).
+    fn refocus_current_list_item(&mut self, artifact_index: i32) -> Result<()> {
+        let col = self.window_info.col;
+        if col <= 0 {
+            return Ok(());
+        }
+        let index0 = artifact_index - 1;
+        if index0 < 0 {
+            return Ok(());
+        }
+        let row_idx = (index0 / col) as usize;
+        let col_idx = (index0 % col) as usize;
+        self.controller
+            .borrow_mut()
+            .move_to(0, 0);
+        utils::sleep(30);
+        Ok(())
     }
 
     fn is_page_first_artifact(&self, cur_index: i32) -> bool {
@@ -236,8 +309,15 @@ impl GenshinArtifactScanner {
         }
     }
 
-    fn send(&mut self, tx: &Sender<Option<SendItem>>, count: i32) {
-        let mut generator = GenshinRepositoryScanController::get_generator(self.controller.clone(), count as usize);
+    fn send(
+        &mut self,
+        tx: &Sender<Option<SendItem>>,
+        count: i32,
+        result_rx: Option<&Receiver<Option<GenshinArtifactScanResult>>>,
+        lock_list: Option<&LockList>,
+    ) {
+        let mut generator =
+            GenshinRepositoryScanController::get_generator(self.controller.clone(), count as usize);
         let mut artifact_index: i32 = 0;
 
         loop {
@@ -257,13 +337,13 @@ impl GenshinArtifactScanner {
                         let top = (origin.top as f64
                             + margin.y
                             + (gap.height + size.height)
-                            * self.get_start_row(count, artifact_index) as f64)
+                                * self.get_start_row(count, artifact_index) as f64)
                             as i32;
                         let width = (origin.width as f64 - margin.x) as i32;
                         let height = (origin.height as f64
                             - margin.y
                             - (gap.height + size.height)
-                            * self.get_start_row(count, artifact_index) as f64)
+                                * self.get_start_row(count, artifact_index) as f64)
                             as i32;
 
                         let game_image = self
@@ -280,10 +360,8 @@ impl GenshinArtifactScanner {
                         None
                     };
 
-
                     artifact_index = artifact_index + 1;
 
-                    // todo normalize types
                     if (star as i32) < self.scanner_config.min_star {
                         info!(
                             "找到满足最低星级要求 {} 的物品，准备退出……",
@@ -303,21 +381,37 @@ impl GenshinArtifactScanner {
                         break;
                     }
 
-                    // scanned_count += 1;
-                }
-                CoroutineState::Complete(result) => {
-                    match result {
-                        Err(e) => error!("扫描发生错误：{}", e),
-                        Ok(value) => {
-                            match value {
-                                GenshinRepositoryControllerReturnResult::Interrupted => info!("用户中断"),
-                                GenshinRepositoryControllerReturnResult::Finished => ()
+                    if let (Some(rx), Some(list)) = (result_rx, lock_list) {
+                        if let Ok(Some(res)) = rx.recv() {
+                            let matched = list.contains(&res);
+                            if matched && !res.lock {
+                                match self.try_lock_artifact() {
+                                    Ok(()) => {
+                                        
+                                    }
+                                    Err(e) => error!("自动上锁点击失败: {}", e),
+                                }
+                            } else if matched && res.lock {
+                                info!("自动上锁跳过（列表已显示为已锁）: {} {}", res.name, res.main_stat_value);
+                            } else if !matched {
+                                info!("自动上锁未匹配: {} {} sub_stat={:?}", res.name, res.main_stat_value, res.sub_stat);
                             }
                         }
                     }
+                },
+                CoroutineState::Complete(result) => {
+                    match result {
+                        Err(e) => error!("扫描发生错误：{}", e),
+                        Ok(value) => match value {
+                            GenshinRepositoryControllerReturnResult::Interrupted => {
+                                info!("用户中断")
+                            },
+                            GenshinRepositoryControllerReturnResult::Finished => (),
+                        },
+                    }
 
                     break;
-                }
+                },
             }
         }
     }

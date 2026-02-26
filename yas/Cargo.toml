@@ -36,9 +36,9 @@ console = "0.15"
 paste = "1.0"
 prettytable-rs = "^0.10"
 bytesize = {version = "1.2.0", features = ["serde"]}
-ort = { version = "2.0.0-rc.2", optional = true }
-ndarray = { version = "0.15", optional = true }
-tract-onnx = { version = "0.21.5", optional = true }
+ort = { version = "2.0.0-rc.9", optional = true }
+ndarray = { version = "0.17", optional = true }
+# tract-onnx = { version = "0.21.5", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libwayshot = { version = "0.3.0", optional = true }
@@ -70,7 +70,8 @@ cc = "1.1.7"
 [features]
 # default = ["tract_onnx"]
 ort = ["dep:ort", "dep:ndarray"]
-tract_onnx = ["dep:tract-onnx"]
+# tract_onnx = ["dep:tract-onnx"]
+tract_onnx = []  # optional; cfg(feature) only, no dep (kept for conditional code)
 
 capturer_screenshots = ["dep:screenshots"]
 capturer_libwayshot = ["dep:libwayshot"]

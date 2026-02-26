@@ -80,8 +80,8 @@
         },
         "genshin_artifact_lock_pos": {
             "Pos": {
-                "x": 1450,
-                "y": 357
+                "x": 1408,
+                "y": 371
             }
         },
         "genshin_artifact_main_stat_name_rect": {
@@ -107,6 +107,17 @@
                 "height": 18,
                 "width": 43
             }
+        },
+        "genshin_artifact_blessed_frost_detect_rect": {
+            "Rect": {
+                "top": 357.1,
+                "left": 1314.9,
+                "height": 15.1,
+                "width": 100.0
+            }
+        },
+        "genshin_artifact_blessed_frost_offset_y": {
+            "Float": 35.6
         },
         "genshin_artifact_item_equip_rect": {
             "Rect": {

@@ -28,6 +28,15 @@ pub struct ArtifactScannerWindowInfo {
     #[window_info(rename = "genshin_artifact_level_rect")]
     pub level_rect: Rect<f64>,
 
+    /// When present (height > 0), detect purple 祝圣之霜 block in this rect (window-relative).
+    /// If detected, level and sub-stat rects are shifted down by `blessed_frost_offset_y`.
+    #[window_info(rename = "genshin_artifact_blessed_frost_detect_rect")]
+    pub blessed_frost_detect_rect: Rect<f64>,
+
+    /// Y offset (pixels) to apply to level and sub-stat crop regions when 祝圣之霜 is detected.
+    #[window_info(rename = "genshin_artifact_blessed_frost_offset_y")]
+    pub blessed_frost_offset_y: f64,
+
     /// equip status of the artifact relative to window
     #[window_info(rename = "genshin_artifact_item_equip_rect")]
     pub item_equip_rect: Rect<f64>,
@@ -63,4 +72,8 @@ pub struct ArtifactScannerWindowInfo {
 
     #[window_info(rename = "genshin_repository_lock_pos")]
     pub lock_pos: Pos<f64>,
+
+    /// Lock button position in the artifact detail panel (window-relative). Click center to toggle lock.
+    #[window_info(rename = "genshin_artifact_lock_pos")]
+    pub artifact_lock_pos: Pos<f64>,
 }
